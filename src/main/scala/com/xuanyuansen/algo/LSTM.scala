@@ -97,6 +97,49 @@ case class LSTMLayerParam(val input_dim: Int, val out_dim: Int){
     DenseMatrix.zeros[Double](out_dim, 1)
   )
 
+  /**
+    * http://sebastianruder.com/optimizing-gradient-descent/
+    */
+  def update_param_rmsprop(lr: Double=0.001,
+                           rho: Double=0.9,
+                           epsilon: Double=1e-8) : Unit = {
+    val gradient_t = Seq(
+      this.wo_diff,
+      this.wf_diff,
+      this.wi_diff,
+      this.wg_diff,
+
+      this.bo_diff,
+      this.bf_diff,
+      this.bi_diff,
+      this.bg_diff
+    )
+
+    this.Eg2_w_ofig = this.Eg2_w_ofig.zip(gradient_t).map{
+      r=>
+        val Eg2_t = rho * (r._1 :*r._1 ) + (1.0 - rho) * (r._2 :* r._2)
+        Eg2_t.asInstanceOf[DenseMatrix[Double]]
+    }
+
+    this.detla_w_ofig = gradient_t.zip(this.Eg2_w_ofig).map{
+      r=>
+        val delta = lr * (r._1 :/ sqrt(r._2 + epsilon ))
+
+        delta.asInstanceOf[DenseMatrix[Double]]
+    }
+
+    this.Wo -= this.detla_w_ofig.head
+    this.Wf -= this.detla_w_ofig.apply(1)
+    this.Wi -= this.detla_w_ofig.apply(2)
+    this.Wg -= this.detla_w_ofig.apply(3)
+    this.Bo -= this.detla_w_ofig.apply(4)
+    this.Bf -= this.detla_w_ofig.apply(5)
+    this.Bi -= this.detla_w_ofig.apply(6)
+    this.Bg -= this.detla_w_ofig.apply(7)
+
+    this.reset_diff()
+  }
+
   def update_param_adadelta(decay_rate : Double): Unit = {
     val gradient_t = Seq(
       this.wo_diff,
@@ -126,6 +169,8 @@ case class LSTMLayerParam(val input_dim: Int, val out_dim: Int){
       r =>
         r._1 :* r._2
     }
+
+    println(this.detla_w_ofig.head.toString())
 
     this.X2_w_ofig = this.X2_w_ofig.zip(this.detla_w_ofig).map{
       r =>
@@ -479,11 +524,36 @@ object LSTM{
 
     simpleLSTM.forward_propagation(data)
 
+    var loss_old = 1000.0
+    var diverse_cnt = 0
     for(idx<- 0 to 4000){
       val loss_new = simpleLSTM.backward_propagation(data, labels)
       println("loss: " + loss_new.toString)
       //simpleLSTM.LstmParams.head.update_param(0.1, 0.5, true)
       simpleLSTM.LstmParams.head.update_param_adadelta(0.95)
+      //simpleLSTM.LstmParams.head.update_param_rmsprop(0.001)
+
+      if (loss_new > loss_old){
+        diverse_cnt += 1
+      }
+
+      if (diverse_cnt>10) {
+        println("breaking out, because of getting diverse")
+        val out = simpleLSTM.y_out
+        for(idx<- out.indices){
+          val outnode  = out.apply(idx)
+          println( outnode )
+          println("------")
+          val pre = DenseMatrix.zeros[Double](outnode.rows, outnode.cols)
+          pre( argmax(outnode) ) = 1.0
+          println( pre )
+          println("------")
+        }
+        System.exit(0)
+      }
+
+      loss_old = loss_new
+
     }
 
     val out = simpleLSTM.y_out
