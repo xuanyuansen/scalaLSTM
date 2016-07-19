@@ -60,5 +60,9 @@ object funcTest {
     println(sum(exp(test)) - max(test))
 
     println((0 until 4).reverse)
+
+    val zout = 2.0 * DenseMatrix.ones[Double](2,3)
+    println(zout)
+    println(1.0 / zout + 6.0)
   }
 }

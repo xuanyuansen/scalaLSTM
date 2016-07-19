@@ -1,7 +1,7 @@
 package com.xuanyuansen.algo
 
 import breeze.linalg._
-import breeze.numerics.{exp, tanh, sigmoid}
+import breeze.numerics.{sqrt, exp, tanh, sigmoid}
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -34,6 +34,19 @@ case class LSTMLayerParam(val input_dim: Int, val out_dim: Int){
   /**
     *
     */
+  var Wo_theta_pre = DenseMatrix.zeros[Double](out_dim, concat_len)
+  var Wf_theta_pre = DenseMatrix.zeros[Double](out_dim, concat_len)
+  var Wi_theta_pre = DenseMatrix.zeros[Double](out_dim, concat_len)
+  var Wg_theta_pre = DenseMatrix.zeros[Double](out_dim, concat_len)
+
+  var Bo_theta_pre = DenseMatrix.zeros[Double](out_dim, 1)
+  var Bf_theta_pre = DenseMatrix.zeros[Double](out_dim, 1)
+  var Bi_theta_pre = DenseMatrix.zeros[Double](out_dim, 1)
+  var Bg_theta_pre = DenseMatrix.zeros[Double](out_dim, 1)
+
+  /**
+    *
+    */
   var wo_diff = DenseMatrix.zeros[Double](out_dim, concat_len)
   var wf_diff = DenseMatrix.zeros[Double](out_dim, concat_len)
   var wi_diff = DenseMatrix.zeros[Double](out_dim, concat_len)
@@ -46,22 +59,135 @@ case class LSTMLayerParam(val input_dim: Int, val out_dim: Int){
   var bg_diff = DenseMatrix.zeros[Double](out_dim, 1)
 
 
-  def update_param(lr : Double): Unit ={
+  /**
+    * http://arxiv.org/pdf/1212.5701v1.pdf
+    */
+  var Eg2_w_ofig = Seq(
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+    DenseMatrix.zeros[Double](out_dim, concat_len),
 
-    this.Wo -= this.wo_diff * lr
-    this.Wf -= this.wf_diff * lr
-    this.Wi -= this.wi_diff * lr
-    this.Wg -= this.wg_diff * lr
+    DenseMatrix.zeros[Double](out_dim, 1),
+    DenseMatrix.zeros[Double](out_dim, 1),
+    DenseMatrix.zeros[Double](out_dim, 1),
+    DenseMatrix.zeros[Double](out_dim, 1)
+  )
+  var X2_w_ofig = Seq(
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+    DenseMatrix.zeros[Double](out_dim, concat_len),
 
-    this.Bo -= this.bo_diff * lr
-    this.Bf -= this.bf_diff * lr
-    this.Bi -= this.bi_diff * lr
-    this.Bg -= this.bg_diff * lr
+    DenseMatrix.zeros[Double](out_dim, 1),
+    DenseMatrix.zeros[Double](out_dim, 1),
+    DenseMatrix.zeros[Double](out_dim, 1),
+    DenseMatrix.zeros[Double](out_dim, 1)
+  )
+
+  var detla_w_ofig = Seq(
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+    DenseMatrix.zeros[Double](out_dim, concat_len),
+
+    DenseMatrix.zeros[Double](out_dim, 1),
+    DenseMatrix.zeros[Double](out_dim, 1),
+    DenseMatrix.zeros[Double](out_dim, 1),
+    DenseMatrix.zeros[Double](out_dim, 1)
+  )
+
+  def update_param_adadelta(decay_rate : Double): Unit = {
+    val gradient_t = Seq(
+      this.wo_diff,
+      this.wf_diff,
+      this.wi_diff,
+      this.wg_diff,
+
+      this.bo_diff,
+      this.bf_diff,
+      this.bi_diff,
+      this.bg_diff
+    )
+
+    this.Eg2_w_ofig = this.Eg2_w_ofig.zip(gradient_t).map{ r=>
+      val Eg2_t = decay_rate * r._1 + (1.0 - decay_rate) * (r._2 :* r._2)
+      Eg2_t.asInstanceOf[DenseMatrix[Double]]
+    }
+
+    /**
+      * adaptive learning rate, using W and delta_W
+      */
+    this.detla_w_ofig = this.X2_w_ofig.zip(this.Eg2_w_ofig).map{
+      r=>
+        val gra_theta_t =  -1.0 * ( sqrt(r._1 + 1e-6).asInstanceOf[DenseMatrix[Double]] :/ sqrt(r._2 + 1e-6).asInstanceOf[DenseMatrix[Double]] )
+        gra_theta_t.asInstanceOf[DenseMatrix[Double]]
+    }.zip(gradient_t).map{
+      r =>
+        r._1 :* r._2
+    }
+
+    this.X2_w_ofig = this.X2_w_ofig.zip(this.detla_w_ofig).map{
+      r =>
+        val X2_theta_t = decay_rate * r._1 + (1.0 - decay_rate) * (r._2 :* r._2)
+        X2_theta_t.asInstanceOf[DenseMatrix[Double]]
+    }
+
+    this.Wo += this.detla_w_ofig.head
+    this.Wf += this.detla_w_ofig.apply(1)
+    this.Wi += this.detla_w_ofig.apply(2)
+    this.Wg += this.detla_w_ofig.apply(3)
+    this.Bo += this.detla_w_ofig.apply(4)
+    this.Bf += this.detla_w_ofig.apply(5)
+    this.Bi += this.detla_w_ofig.apply(6)
+    this.Bg += this.detla_w_ofig.apply(7)
 
     this.reset_diff()
   }
 
-  def reset_diff(): Unit ={
+
+  def update_param(lr : Double, momentum_p: Double = 0.5, momentum : Boolean = false): Unit ={
+    if (momentum){
+
+      val theta_wo = (this.Wo_theta_pre * momentum_p).asInstanceOf[DenseMatrix[Double]] - (this.wo_diff * lr).asInstanceOf[DenseMatrix[Double]]
+      val theta_wf = (this.Wf_theta_pre * momentum_p).asInstanceOf[DenseMatrix[Double]] - (this.wf_diff * lr).asInstanceOf[DenseMatrix[Double]]
+      val theta_wi = (this.Wi_theta_pre * momentum_p).asInstanceOf[DenseMatrix[Double]] - (this.wi_diff * lr).asInstanceOf[DenseMatrix[Double]]
+      val theta_wg = (this.Wg_theta_pre * momentum_p).asInstanceOf[DenseMatrix[Double]] - (this.wg_diff * lr).asInstanceOf[DenseMatrix[Double]]
+
+      val theta_bo = (this.Bo_theta_pre * momentum_p).asInstanceOf[DenseMatrix[Double]] - (this.bo_diff * lr).asInstanceOf[DenseMatrix[Double]]
+      val theta_bf = (this.Bf_theta_pre * momentum_p).asInstanceOf[DenseMatrix[Double]] - (this.bf_diff * lr).asInstanceOf[DenseMatrix[Double]]
+      val theta_bi = (this.Bi_theta_pre * momentum_p).asInstanceOf[DenseMatrix[Double]] - (this.bi_diff * lr).asInstanceOf[DenseMatrix[Double]]
+      val theta_bg = (this.Bg_theta_pre * momentum_p).asInstanceOf[DenseMatrix[Double]] - (this.bg_diff * lr).asInstanceOf[DenseMatrix[Double]]
+
+      this.retain_param(theta_wo,theta_wf, theta_wi,theta_wg, theta_bo,theta_bf,theta_bi,theta_bg)
+
+      this.Wo += theta_wo
+      this.Wf += theta_wf
+      this.Wi += theta_wi
+      this.Wg += theta_wg
+
+      this.Bo += theta_bo
+      this.Bf += theta_bf
+      this.Bi += theta_bi
+      this.Bg += theta_bg
+
+    }
+    else {
+      this.Wo -= this.wo_diff * lr
+      this.Wf -= this.wf_diff * lr
+      this.Wi -= this.wi_diff * lr
+      this.Wg -= this.wg_diff * lr
+
+      this.Bo -= this.bo_diff * lr
+      this.Bf -= this.bf_diff * lr
+      this.Bi -= this.bi_diff * lr
+      this.Bg -= this.bg_diff * lr
+    }
+
+    this.reset_diff()
+  }
+
+  def reset_diff(): Unit = {
     this.wo_diff = DenseMatrix.zeros[Double](out_dim, concat_len)
     this.wf_diff = DenseMatrix.zeros[Double](out_dim, concat_len)
     this.wi_diff = DenseMatrix.zeros[Double](out_dim, concat_len)
@@ -72,6 +198,22 @@ case class LSTMLayerParam(val input_dim: Int, val out_dim: Int){
     this.bf_diff = DenseMatrix.zeros[Double](out_dim, 1)
     this.bi_diff = DenseMatrix.zeros[Double](out_dim, 1)
     this.bg_diff = DenseMatrix.zeros[Double](out_dim, 1)
+  }
+
+  def retain_param(theta_wo:DenseMatrix[Double],theta_wf:DenseMatrix[Double], theta_wi:DenseMatrix[Double],theta_wg:DenseMatrix[Double],
+                   theta_bo:DenseMatrix[Double],theta_bf:DenseMatrix[Double],theta_bi:DenseMatrix[Double],theta_bg:DenseMatrix[Double]): Unit = {
+    /**
+      * retain pre status
+      */
+    this.Wo_theta_pre = theta_wo
+    this.Wf_theta_pre = theta_wf
+    this.Wi_theta_pre = theta_wi
+    this.Wg_theta_pre = theta_wg
+
+    this.Bo_theta_pre = theta_bo
+    this.Bf_theta_pre = theta_bf
+    this.Bi_theta_pre = theta_bi
+    this.Bg_theta_pre = theta_bg
   }
 }
 
@@ -337,10 +479,11 @@ object LSTM{
 
     simpleLSTM.forward_propagation(data)
 
-    for(idx<- 0 to 30000){
+    for(idx<- 0 to 4000){
       val loss_new = simpleLSTM.backward_propagation(data, labels)
       println("loss: " + loss_new.toString)
-      simpleLSTM.LstmParams.head.update_param(0.02)
+      //simpleLSTM.LstmParams.head.update_param(0.1, 0.5, true)
+      simpleLSTM.LstmParams.head.update_param_adadelta(0.95)
     }
 
     val out = simpleLSTM.y_out
