@@ -24,3 +24,8 @@ LSTM的训练使用了BPTT算法，需要重要理解的一点是BPTT算法相�
 * breeze库
 
 ####利用SPARK实现minibatch方式的训练
+
+####几种常见的LSTM结构
+*	1、原始LSTM
+*	2、peephole LSTM
+*	3、GRU

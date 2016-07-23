@@ -64,5 +64,7 @@ object funcTest {
     val zout = 2.0 * DenseMatrix.ones[Double](2,3)
     println(zout)
     println(1.0 / zout + 6.0)
+
+
   }
 }
