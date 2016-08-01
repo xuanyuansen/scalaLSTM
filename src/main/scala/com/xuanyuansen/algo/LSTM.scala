@@ -2,6 +2,8 @@ package com.xuanyuansen.algo
 
 import breeze.linalg._
 import breeze.numerics.{sqrt, exp, tanh, sigmoid}
+import com.typesafe.scalalogging.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -170,7 +172,7 @@ case class LSTMLayerParam(val input_dim: Int, val out_dim: Int){
         r._1 :* r._2
     }
 
-    println(this.detla_w_ofig.head.toString())
+    //println(this.detla_w_ofig.head.toString())
 
     this.X2_w_ofig = this.X2_w_ofig.zip(this.detla_w_ofig).map{
       r =>
@@ -362,7 +364,8 @@ class LSTMLayerNode(val input_dim: Int, val out_dim: Int){
 
     bottom_diff_h_t_minus_1 = this.diff_cell_t :* this.f
     bottom_diff_cell_t_minus_1 = dxc(param.input_dim to -1, ::)
-    bottom_diff_x_t_minus_1 = dxc( 0 to param.input_dim, ::)
+    //bottom_diff_x_t_minus_1 = dxc( 0 to param.input_dim, ::)
+    bottom_diff_x_t_minus_1 = dxc( 0 until param.input_dim, ::)
   }
 
 }
@@ -425,15 +428,61 @@ class  simpleLossLayer extends LossLayer{
 
 
 class LstmNeuralNetwork(val input_dim: Int, val hidden_dims : Seq[Int],val layer_size: Int =1, val lossLayer : LossLayer){
+  @transient lazy protected val logger = Logger(LoggerFactory.getLogger(this.getClass))
+
   assert(this.hidden_dims.length == this.layer_size && layer_size>=1)
 
   val LstmParams = new ArrayBuffer[LSTMLayerParam]()
   val y_out = new ArrayBuffer[ DenseMatrix[Double] ]()
-
+  val y_out_seq = new ArrayBuffer[ArrayBuffer[ DenseMatrix[Double] ]]()
+  val node_seq = new ArrayBuffer[ Seq[ LSTMLayerNode ]]()
 
   LstmParams.append(LSTMLayerParam(this.input_dim, hidden_dims.head))
   for(idx <- 1 until hidden_dims.length){
     LstmParams.append( LSTMLayerParam(hidden_dims.apply(idx - 1 ), hidden_dims.apply(idx)))
+
+  }
+
+  def multilayer_forward_propagation(x_input:Seq[ DenseMatrix[Double] ]) : Unit = {
+    this.y_out_seq.clear()
+    this.node_seq.clear()
+
+    var idx = 0
+    this.LstmParams.foreach{
+      r=>
+        val y_temp = new ArrayBuffer[ DenseMatrix[Double] ]()
+        val nodes = new ArrayBuffer[ LSTMLayerNode ]()
+        val input_t = if (idx == 0) x_input else y_out_seq.apply(idx - 1)
+
+        val first_node = new LSTMLayerNode(r.input_dim, r.out_dim)
+
+        first_node.forward( input_t.head, DenseMatrix.zeros[Double](r.out_dim, 1), DenseMatrix.zeros[Double](r.out_dim, 1), r)
+
+        nodes.append( first_node )
+        y_temp.append( first_node.state_h )
+
+
+        for(idx<- 1 until input_t.size){
+          val cell_pre = nodes.apply( idx -1 ).state_cell
+          val h_pre = nodes.apply( idx -1 ).state_h
+          val cur_node = new LSTMLayerNode(r.input_dim, r.out_dim)
+          cur_node.forward(input_t.apply(idx), cell_pre, h_pre, r)
+          nodes.append( cur_node )
+          y_temp.append( cur_node.state_h )
+        }
+
+        this.y_out_seq.append(y_temp)
+        this.node_seq.append(nodes)
+        idx += 1
+
+        /*
+        logger.info("round %d".format(idx))
+        logger.info(this.y_out_seq.map{k=>k.toString()}.mkString("\t"))
+        println("round %d".format(idx))
+        println(this.y_out_seq.map{k=>k.toString()}.mkString("\t"))
+        */
+    }
+
   }
 
   def forward_propagation(x_input:Seq[ DenseMatrix[Double] ]): Seq[ LSTMLayerNode ] = {
@@ -458,6 +507,80 @@ class LstmNeuralNetwork(val input_dim: Int, val hidden_dims : Seq[Int],val layer
     nodes
   }
 
+  def multilayer_backward_propagation(x_input:Seq[ DenseMatrix[Double]],
+                                      labels : Seq[ DenseMatrix[Double]]): Seq[Double] = {
+
+    this.multilayer_forward_propagation(x_input)
+
+    val next_diff = new ArrayBuffer[ DenseMatrix[Double] ]()
+    val losses = new ArrayBuffer[ Double ]()
+
+    assert(x_input.length == this.node_seq.last.length)
+
+    /**
+      * last layer last node
+      */
+    var loss = lossLayer.negative_log_likelihood(labels.last, this.node_seq.last.last.state_h)
+    val diff_h = lossLayer.diff(labels.last, this.node_seq.last.last.state_h)
+    val diff_cell = DenseMatrix.zeros[Double](hidden_dims.last, 1)
+
+    this.node_seq.last.last.backward(diff_h, diff_cell, LstmParams.last)
+
+
+    next_diff.append(this.node_seq.last.last.bottom_diff_x_t_minus_1)
+
+    /**
+      * last layer, other nodes
+      */
+    for(idx<- (0 until this.node_seq.last.length - 1).reverse ) {
+      loss += lossLayer.negative_log_likelihood(labels.apply( idx ), this.node_seq.last.apply( idx ).state_h)
+
+      var diff_h = lossLayer.diff(labels.apply( idx ), this.node_seq.last.apply(idx).state_h)
+      diff_h +=  this.node_seq.last.apply( idx+1 ).bottom_diff_h_t_minus_1
+
+      val diff_cell = this.node_seq.last.apply( idx+1 ).bottom_diff_cell_t_minus_1
+
+      this.node_seq.last.apply( idx ).backward(diff_h, diff_cell, LstmParams.last )
+      next_diff.append(this.node_seq.last.apply( idx ).bottom_diff_x_t_minus_1)
+    }
+
+    losses.append(loss)
+
+    /**
+      * sub lstm layers
+      */
+    for (layer_idx<- (0 until layer_size-1 ).reverse){
+      losses.append(next_diff.map{k=> sum(k :* k)}.sum)
+      /**
+        * last node
+        */
+      val diff_h = next_diff.last
+
+      val diff_cell = DenseMatrix.zeros[Double](hidden_dims.apply(layer_idx), 1)
+
+
+      this.node_seq.apply(layer_idx).last.backward(diff_h, diff_cell, LstmParams.apply(layer_idx))
+      next_diff.update(next_diff.length - 1, this.node_seq.apply(layer_idx).last.bottom_diff_x_t_minus_1 )
+
+
+      for(node_idx <- (0 until this.node_seq.apply(layer_idx).length-1).reverse ) {
+        var diff_h = next_diff.apply(node_idx)
+
+        diff_h +=  this.node_seq.apply(layer_idx).apply( node_idx+1 ).bottom_diff_h_t_minus_1
+        val diff_cell = this.node_seq.apply(layer_idx).apply( node_idx+1 ).bottom_diff_cell_t_minus_1
+        this.node_seq.apply(layer_idx).apply( node_idx ).backward(diff_h, diff_cell, LstmParams.apply(layer_idx))
+
+        next_diff.update(node_idx, this.node_seq.apply(layer_idx).apply( node_idx ).bottom_diff_x_t_minus_1)
+
+      }
+
+    }
+
+    losses.reverse
+  }
+
+
+
   def backward_propagation(x_input:Seq[ DenseMatrix[Double]],
                            labels : Seq[ DenseMatrix[Double]]): Double = {
     val nodes = this.forward_propagation(x_input)
@@ -465,13 +588,11 @@ class LstmNeuralNetwork(val input_dim: Int, val hidden_dims : Seq[Int],val layer
     val last_node = x_input.length - 1
 
     assert(x_input.length == nodes.length)
-
     var loss = lossLayer.negative_log_likelihood(labels.apply( last_node ), nodes.apply( last_node ).state_h)
     val diff_h = lossLayer.diff(labels.apply( last_node ), nodes.apply( last_node ).state_h)
     val diff_cell = DenseMatrix.zeros[Double](hidden_dims.head, 1)
 
     nodes.apply( last_node ).backward(diff_h, diff_cell, LstmParams.head)
-
 
     for(idx<- (0 until nodes.length-1).reverse ) {
       loss += lossLayer.negative_log_likelihood(labels.apply( idx ), nodes.apply( idx ).state_h)
@@ -520,10 +641,33 @@ object LSTM{
       DenseMatrix((0.0,0.0,0.0,0.0,0.0,0.0,0.1,0.0)).t
     )
 
-    val simpleLSTM = new LstmNeuralNetwork(5, Seq(8), 1, new simpleLossLayer)
+    val simpleLSTM = new LstmNeuralNetwork(5, Seq(6,7,8), 3, new simpleLossLayer)
 
+
+    //simpleLSTM.multilayer_forward_propagation(data)
+
+    for(idx<- 0 to 500){
+      val loss = simpleLSTM.multilayer_backward_propagation(data, labels)
+      println(loss)
+      simpleLSTM.LstmParams.foreach{
+        k=>k.update_param_adadelta(0.95)
+      }
+    }
+
+    val out = simpleLSTM.y_out_seq.last
+    for(idx<- out.indices){
+      val outnode  = out.apply(idx)
+      println( outnode )
+      println("------")
+      val pre = DenseMatrix.zeros[Double](outnode.rows, outnode.cols)
+      pre( argmax(outnode) ) = 1.0
+      println( pre )
+      println("------")
+    }
+
+
+    /*
     simpleLSTM.forward_propagation(data)
-
     var loss_old = 1000.0
     var diverse_cnt = 0
     for(idx<- 0 to 4000){
@@ -567,5 +711,6 @@ object LSTM{
       println("------")
     }
 
+    */
   }
 }

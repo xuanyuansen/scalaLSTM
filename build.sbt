@@ -13,7 +13,3 @@ libraryDependencies ++= Seq(
   "org.scalanlp" %% "breeze-natives" % "0.12",
   "org.scalanlp" %% "breeze-viz" % "0.12"
 )
-
-resolvers ++= Seq(
-  "OSChina Maven Repository" at "http://maven.oschina.net/content/groups/public/"
-)
