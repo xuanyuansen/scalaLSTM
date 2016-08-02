@@ -34,10 +34,33 @@ def trainword2vectormodel(datapath='dataFile', size=128, alpha=0.02, window=5, w
         os.mkdir('./word2vec/')
     model.save('./word2vec/Word2VecModel')
 
+def getvectors(inputFile,outputFile):
+    with open(outputFile) as output:
+        with open(inputFile) as inputfile:
+            logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
+            model=gensim.models.Word2Vec.load('./word2vec/Word2VecModelCSV')
+
+            lines=inputfile.readlines()
+            print "START", model["START"]
+            print "END", model["END"]
+
+            idx = 0
+            for line in lines:
+                idx += 1
+                try:
+                    for element in line.split(","):
+                        if idx % 500 ==0:
+                            try:
+                                output.writelines(str(model[element]))
+                            except:
+                                print "no key"
+                    outputFile.writelines("\n")
+                except:
+                    print "exception"
 
 if __name__ == '__main__':
     reload(sys)
     sys.setdefaultencoding("utf-8")
     trainword2vectormodel(sys.argv[1])
-
+    getvectors(sys.argv[1], sys.argv[2])
     pass
