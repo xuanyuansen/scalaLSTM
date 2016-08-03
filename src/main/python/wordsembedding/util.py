@@ -17,15 +17,14 @@ class SimpleSentences(object):
     def __init__(self, filename):
         self.filename = filename
         self.idx=0
-
-    def __iter__(self):
         with open(self.filename, 'r') as input:
             lines=input.readlines()
             tokenized_sentences = [line.strip().split(',') for line in lines]
             word_freq = nltk.FreqDist(itertools.chain(*tokenized_sentences))
             print "Found {0} unique words.".format( len(word_freq.items() ) )
-            to_remove_words = [ k for k,v in word_freq.iteritems()  if v<=1 ]
+            self.to_remove_words = [ k for k,v in word_freq.iteritems()  if v<=1 ]
 
+    def __iter__(self):
         for line in open(self.filename, 'r'):
             try:
                 self.idx += 1
@@ -33,7 +32,7 @@ class SimpleSentences(object):
                     print "iter: ",self.idx,line
 
                 temp_line = line.strip()
-                for ele in to_remove_words:
+                for ele in self.to_remove_words:
                     temp_line.replace(ele, "UNKNOWN")
 
                 yield "START,{0},END".format( temp_line ).split(",")

@@ -1,8 +1,8 @@
 package com.xuanyuansen.algo.util
 
 /**
-  * Created by wangshuai on 16/7/28.
-  */
+ * Created by wangshuai on 16/7/28.
+ */
 
 trait Params extends Serializable {
 
