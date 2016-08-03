@@ -19,12 +19,24 @@ class SimpleSentences(object):
         self.idx=0
 
     def __iter__(self):
+        with open(self.filename, 'r') as input:
+            lines=input.readlines()
+            tokenized_sentences = [line.strip().split(',') for line in lines]
+            word_freq = nltk.FreqDist(itertools.chain(*tokenized_sentences))
+            print "Found {0} unique words.".format( len(word_freq.items() ) )
+            to_remove_words = [ k for k,v in word_freq.iteritems()  if v<=1 ]
+
         for line in open(self.filename, 'r'):
             try:
                 self.idx += 1
                 if self.idx % 10000 ==0:
                     print "iter: ",self.idx,line
-                yield "START,{0},END".format(line.strip()).split(",")
+
+                temp_line = line.strip()
+                for ele in to_remove_words:
+                    temp_line.replace(ele, "UNKNOWN")
+
+                yield "START,{0},END".format( temp_line ).split(",")
             except:
                 print "illegal sentence"
                 yield [""]
@@ -52,14 +64,17 @@ def getvectors(inputFile,outputFile):
 
             lines=inputfile.readlines()
             tokenized_sentences = [line.strip().split(',') for line in lines]
-            #print  tokenized_sentences
+
             word_freq = nltk.FreqDist(itertools.chain(*tokenized_sentences))
-            print "Found {0} unique words.".format( len(word_freq.items() ) )
+
             vec_dic = [ k for k,v in word_freq.iteritems()  if len(k)>1]
+
             print "START", model["START"]
             print "END", model["END"]
+
             output.writelines( "{0}\t{1}\n".format( "START", array2string("START", model) ) )
             output.writelines( "{0}\t{1}\n".format( "END", array2string("END", model) ) )
+            output.writelines( "{0}\t{1}\n".format( "UNKNOWN", array2string("END", model) ) )
 
             for element in vec_dic:
                 output.writelines( "{0}\t{1}\n".format( element, array2string(element, model) ) )

@@ -65,6 +65,8 @@ object funcTest {
     println(zout)
     println(1.0 / zout + 6.0)
 
+    val out1 = DenseMatrix.create(5, 1 , Array(1,2,3,4,5))
+    println(out1)
 
   }
 }
