@@ -4,7 +4,7 @@
 
 这里需要注意文章最后提及的LSTM两种变形，第一种是加入peephole，使得gate layer能够回溯前一个cell的状态，这增加了一些复杂度；第二种是GRU，将gate layer和forget layer合并为一个update layer，降低了复杂度。
 ####LSTM网络的训练
-LSTM的训练使用了BPTT算法，需要重要理解的一点是BPTT算法相当于BP算法扩展到序列（时序）数据，另一个需要理解的点是LSTM是recursive neural network（这里注意理解recurrent neural network和recursive neural network的区别），BPTT算法在计算中要注意这一点。
+LSTM的训练使用了BPTT算法，需要重要理解的一点是BPTT算法相当于BP算法扩展到序列（时序）数据，另一个需要理解的点是LSTM是recurrent neural network（这里注意理解recurrent neural network和recursive neural network的区别），BPTT算法在计算中要注意这一点。
 
 ####LSTM的计算图Compute Graph
 *	LSTM的BPTT算法可以参考这篇文章http://nicodjimenez.github.io/2014/08/08/lstm.html
